@@ -10,7 +10,7 @@
 
 | 公開先 | URL | Basic 認証 |
 |---|---|---|
-| Cloudflare Pages | 公開後に記入 | あり（ユーザー名・パスワードが必要） |
+| Cloudflare Pages | https://ai-homework.pages.dev | あり（ユーザー名・パスワードが必要） |
 | GitHub Pages | https://sup-akirasasaki.github.io/ai-homework/ | **なし**（誰でも開ける） |
 
 ---
