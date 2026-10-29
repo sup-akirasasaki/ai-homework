@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <!-- スマホ幅に合わせて表示する設定 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- 検索エンジンに載せない設定（1か所目。ほかに robots.txt と _headers） -->
+  <meta name="robots" content="noindex, nofollow">
+  <title>チーム日程調整</title>
+  <!-- 見た目の部品（Tailwind CSS）をバージョン固定で読み込む -->
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.1.11"></script>
+  <style>
+    /* ポップアップの後ろを暗くする */
+    dialog::backdrop { background: rgb(15 23 42 / 0.55); }
+    /* iPhoneで入力欄を押したときに画面が拡大されないよう、文字を16px以上にする */
+    input, select, textarea { font-size: 16px; }
+    /* 入力に問題がある欄を赤枠で示す */
+    input[aria-invalid="true"] { border-color: #f43f5e; box-shadow: 0 0 0 3px #fecdd3; }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 text-slate-800 antialiased">
+
+  <!-- ===== ヘッダー ===== -->
+  <header class="border-b border-slate-200 bg-white">
+    <div class="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
+      <h1 class="text-lg font-bold">チーム日程調整</h1>
+      <button id="btnSettings" type="button"
+        class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-100">
+        設定
+      </button>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-5xl space-y-5 px-4 py-5">
+
+    <!-- ===== サマリー（会議名と、いちばん都合のよい候補） ===== -->
+    <section id="summary" class="rounded-xl border border-slate-200 bg-white p-4"></section>
+
+    <!-- ===== 操作ボタン ===== -->
+    <div class="flex flex-wrap gap-2">
+      <button id="btnAdd" type="button"
+        class="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">
+        ＋ 候補日を追加
+      </button>
+      <button id="btnReset" type="button"
+        class="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
+        ダミーデータに戻す
+      </button>
+    </div>
+
+    <!-- ===== 候補日の一覧 ===== -->
+    <section class="space-y-3">
+      <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 class="text-base font-bold">候補日の一覧</h2>
+        <p class="text-xs text-slate-500">○ 参加できる　△ 調整すれば参加できる　× 参加できない　－ 未回答</p>
+      </div>
+      <p class="hidden text-xs text-slate-500 md:block">行をクリックすると編集できます。</p>
+      <p class="text-xs text-slate-500 md:hidden">カードをタップすると編集できます。</p>
+
+      <!-- 候補日が1件もないときの表示 -->
+      <p id="listEmpty" class="hidden rounded-xl border border-dashed border-slate-300 bg-white p-6 text-center text-sm text-slate-500">
+        候補日がありません。「＋ 候補日を追加」から登録してください。
+      </p>
+      <!-- PC用：表（画面幅768px以上で表示） -->
+      <div id="tableWrap" class="hidden overflow-x-auto md:block"></div>
+      <!-- スマホ用：カード（画面幅768px未満で表示） -->
+      <div id="cardList" class="space-y-3 md:hidden"></div>
+    </section>
+
+    <p class="pt-2 text-xs text-slate-400">
+      データはこのブラウザの中だけに保存されます。ほかの人や別の端末とは共有されません。
+    </p>
+  </main>
+
+  <!-- ===== 候補日の登録・編集ポップアップ ===== -->
+  <dialog id="candidateDialog" class="m-auto w-[calc(100%-2rem)] max-w-lg rounded-2xl bg-white p-0 shadow-xl">
+    <form id="candidateForm" class="space-y-5 p-5" novalidate>
+      <h2 id="candidateDialogTitle" class="text-lg font-bold">候補日を追加</h2>
+
+      <!-- 日時 -->
+      <div class="space-y-3">
+        <label class="block">
+          <span class="text-sm font-medium">日付</span>
+          <input id="fDate" type="date"
+            class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2">
+        </label>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block min-w-0">
+            <span class="text-sm font-medium">開始時刻</span>
+            <input id="fStart" type="time"
+              class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2">
+          </label>
+          <label class="block min-w-0">
+            <span class="text-sm font-medium">終了時刻</span>
+            <input id="fEnd" type="time"
+              class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2">
+          </label>
+        </div>
+      </div>
+
+      <!-- 5人分の回答（○△× ボタン） -->
+      <div>
+        <p class="text-sm font-medium">都合</p>
+        <p class="text-xs text-slate-500">選んでいるボタンをもう一度押すと「未回答」に戻ります。</p>
+        <div id="answerRows" class="mt-2 divide-y divide-slate-100"></div>
+      </div>
+
+      <!-- 状態 -->
+      <div>
+        <p class="text-sm font-medium">状態</p>
+        <div id="statusButtons" class="mt-1 grid grid-cols-2 gap-2"></div>
+        <p class="mt-1 text-xs text-slate-500">「決定」にできるのは1件だけです。ほかの「決定」は「候補」に戻ります。</p>
+      </div>
+
+      <!-- メモ -->
+      <label class="block">
+        <span class="text-sm font-medium">メモ</span>
+        <textarea id="fMemo" rows="3"
+          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2"></textarea>
+      </label>
+
+      <p id="candidateError" class="hidden rounded-lg bg-rose-50 p-3 text-sm text-rose-700"></p>
+      <p id="candidateMeta" class="whitespace-pre-line text-xs text-slate-400"></p>
+
+      <!-- ボタン -->
+      <div class="flex flex-wrap items-center gap-2">
+        <button id="btnDelete" type="button"
+          class="rounded-lg border border-rose-300 px-4 py-2.5 text-sm font-medium text-rose-600 hover:bg-rose-50">
+          削除
+        </button>
+        <div class="ml-auto flex gap-2">
+          <button type="button" data-close
+            class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium hover:bg-slate-100">
+            キャンセル
+          </button>
+          <button type="submit"
+            class="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">
+            保存
+          </button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ===== 設定ポップアップ（会議名・メンバー名） ===== -->
+  <dialog id="settingsDialog" class="m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl bg-white p-0 shadow-xl">
+    <form id="settingsForm" class="space-y-5 p-5" novalidate>
+      <h2 class="text-lg font-bold">設定</h2>
+      <label class="block">
+        <span class="text-sm font-medium">会議名</span>
+        <input id="sMeetingName" type="text"
+          class="mt-1 block w-full rounded-lg border border-slate-300 px-3 py-2">
+      </label>
+      <div>
+        <p class="text-sm font-medium">メンバー名</p>
+        <p class="text-xs text-slate-500">名前を変えても、入力済みの回答はそのまま残ります。</p>
+        <div id="memberInputs" class="mt-2 space-y-2"></div>
+      </div>
+      <p id="settingsError" class="hidden rounded-lg bg-rose-50 p-3 text-sm text-rose-700"></p>
+      <div class="flex justify-end gap-2">
+        <button type="button" data-close
+          class="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium hover:bg-slate-100">
+          キャンセル
+        </button>
+        <button type="submit"
+          class="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-indigo-700">
+          保存
+        </button>
+      </div>
+    </form>
+  </dialog>
+
+  <script>
+    'use strict';
+
+    // ============================================================
+    // 定数
+    // ============================================================
+    const KEY_CANDIDATES = 'teamSchedule.candidates'; // 候補日データの保存名
+    const KEY_SETTINGS = 'teamSchedule.settings';     // 設定の保存名
+    const MEMBER_COUNT = 5;
+    const MARKS = ['○', '△', '×'];
+    const UNANSWERED = '未回答';
+    const STATUS_CANDIDATE = '候補';
+    const STATUS_DECIDED = '決定';
+    const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'];
+
+    // 一覧に表示する ○△× の色
+    const MARK_BADGE_CLASS = {
+      '○': 'bg-emerald-100 text-emerald-700',
+      '△': 'bg-amber-100 text-amber-700',
+      '×': 'bg-rose-100 text-rose-700',
+      [UNANSWERED]: 'bg-slate-100 text-slate-400',
+    };
+    // ポップアップで選択中の ○△× ボタンの色
+    const MARK_SELECTED_CLASS = {
+      '○': 'border-emerald-500 bg-emerald-500 text-white',
+      '△': 'border-amber-400 bg-amber-400 text-white',
+      '×': 'border-rose-500 bg-rose-500 text-white',
+    };
+    const MARK_UNSELECTED_CLASS = 'border-slate-300 bg-white text-slate-400 hover:bg-slate-50';
+
+    // 設定の初期値
+    function defaultSettings() {
+      return {
+        meetingName: '定例ミーティング',
+        memberNames: ['メンバーA', 'メンバーB', 'メンバーC', 'メンバーD', 'メンバーE'],
+      };
+    }
+
+    // ============================================================
+    // データ（画面で使う現在の状態）
+    // ============================================================
+    let candidates = [];             // 候補日テーブルの全レコード
+    let settings = defaultSettings(); // 会議名・メンバー名
+    let editingId = null;            // 編集中の候補日のid（新規のときは null）
+    let draftAnswers = [];           // ポップアップで入力中の回答
+    let draftStatus = STATUS_CANDIDATE; // ポップアップで入力中の状態
+
+    // ============================================================
+    // 画面の部品
+    // ============================================================
+    const $ = (id) => document.getElementById(id);
+    const summaryEl = $('summary');
+    const tableWrap = $('tableWrap');
+    const cardList = $('cardList');
+    const listEmpty = $('listEmpty');
+    const candidateDialog = $('candidateDialog');
+    const candidateForm = $('candidateForm');
+    const answerRows = $('answerRows');
+    const statusButtons = $('statusButtons');
+    const settingsDialog = $('settingsDialog');
+    const settingsForm = $('settingsForm');
+    const memberInputs = $('memberInputs');
+
+    // ============================================================
+    // 小さな道具
+    // ============================================================
+
+    // 画面に文字を出すとき、記号を安全な形に置き換える（入力内容がプログラムとして動かないように）
+    function esc(text) {
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    // 重複しないidを作る（FileMakerのシリアル番号の代わり）
+    function newId() {
+      if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+      return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    }
+
+    const pad2 = (n) => String(n).padStart(2, '0');
+
+    // Date → '2026-11-05' の形
+    function toDateStr(d) {
+      return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    }
+
+    // '2026-11-05' → Date
+    function parseDate(s) {
+      const [y, m, d] = s.split('-').map(Number);
+      return new Date(y, m - 1, d);
+    }
+
+    // 一覧用：11/5(木)
+    function formatDate(s) {
+      const d = parseDate(s);
+      return `${d.getMonth() + 1}/${d.getDate()}(${WEEKDAYS[d.getDay()]})`;
+    }
+
+    // サマリー用：2026年11月5日(木)
+    function formatDateLong(s) {
+      const d = parseDate(s);
+      return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日(${WEEKDAYS[d.getDay()]})`;
+    }
+
+    // 作成日時・更新日時用：2026/10/29 12:34
+    function formatTimestamp(iso) {
+      const d = new Date(iso);
+      if (isNaN(d)) return '－';
+      return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+    }
+
+    // ○△×未回答 の人数を数える（FileMakerの非保存の計算フィールドに相当）
+    function countMarks(c) {
+      const result = { '○': 0, '△': 0, '×': 0, [UNANSWERED]: 0 };
+      c.answers.forEach((a) => { result[a] += 1; });
+      return result;
+    }
+
+    // 日付・開始時刻の早い順に並べるための比較
+    function compareByDateTime(a, b) {
+      return (a.date + a.startTime).localeCompare(b.date + b.startTime);
+    }
+
+    // ============================================================
+    // ダミーデータ
+    // ============================================================
+
+    // 初めて開いた日から数日後〜2週間後の日付で、架空の候補日を4件作る
+    function createDummyCandidates() {
+      const now = new Date().toISOString();
+      const rows = [
+        { days: 3,  start: '10:00', end: '11:00', answers: ['○', '△', '○', '×', '○'], memo: '会議室は未定' },
+        { days: 5,  start: '14:00', end: '15:00', answers: ['○', '○', '○', '△', '○'], memo: '' },
+        { days: 9,  start: '16:00', end: '17:00', answers: ['×', '○', '△', '○', UNANSWERED], memo: '回答待ちあり' },
+        { days: 12, start: '10:00', end: '11:30', answers: ['△', '○', '○', '○', '×'], memo: 'オンライン開催' },
+      ];
+      return rows.map((r) => {
+        const d = new Date();
+        d.setDate(d.getDate() + r.days);
+        return {
+          id: newId(),
+          date: toDateStr(d),
+          startTime: r.start,
+          endTime: r.end,
+          answers: [...r.answers],
+          status: STATUS_CANDIDATE,
+          memo: r.memo,
+          createdAt: now,
+          updatedAt: now,
+        };
+      });
+    }
+
+    // 候補日と設定をダミーの初期状態に戻して保存する
+    function resetToDummy() {
+      candidates = createDummyCandidates();
+      settings = defaultSettings();
+      saveData();
+    }
+
+    // ============================================================
+    // 保存・読み込み（localStorage ＝ ブラウザの中の保存場所）
+    // ============================================================
+
+    // 保存されていたデータの形が崩れていても動くように整える
+    function normalizeCandidate(raw) {
+      if (!raw || typeof raw !== 'object' || !raw.id || !raw.date) return null;
+      const answers = Array.isArray(raw.answers) ? raw.answers.slice(0, MEMBER_COUNT) : [];
+      while (answers.length < MEMBER_COUNT) answers.push(UNANSWERED);
+      return {
+        id: String(raw.id),
+        date: String(raw.date),
+        startTime: String(raw.startTime || ''),
+        endTime: String(raw.endTime || ''),
+        answers: answers.map((a) => (MARKS.includes(a) ? a : UNANSWERED)),
+        status: raw.status === STATUS_DECIDED ? STATUS_DECIDED : STATUS_CANDIDATE,
+        memo: String(raw.memo || ''),
+        createdAt: String(raw.createdAt || ''),
+        updatedAt: String(raw.updatedAt || ''),
+      };
+    }
+
+    function normalizeSettings(raw) {
+      const base = defaultSettings();
+      if (!raw || typeof raw !== 'object') return base;
+      const names = Array.isArray(raw.memberNames) ? raw.memberNames : [];
+      return {
+        meetingName: String(raw.meetingName || base.meetingName),
+        memberNames: base.memberNames.map((def, i) => String(names[i] || def)),
+      };
+    }
+
+    function loadData() {
+      let rawCandidates = null;
+      let rawSettings = null;
+      try {
+        rawCandidates = localStorage.getItem(KEY_CANDIDATES);
+        rawSettings = localStorage.getItem(KEY_SETTINGS);
+      } catch (e) {
+        // 保存場所が使えない環境（プライベートモードなど）でも画面は表示する
+      }
+
+      // 初めて開いたとき（保存データがないとき）はダミーデータを入れる
+      if (rawCandidates === null) {
+        resetToDummy();
+        return;
+      }
+      try {
+        const list = JSON.parse(rawCandidates);
+        candidates = Array.isArray(list) ? list.map(normalizeCandidate).filter(Boolean) : [];
+      } catch (e) {
+        candidates = [];
+      }
+      try {
+        settings = normalizeSettings(rawSettings ? JSON.parse(rawSettings) : null);
+      } catch (e) {
+        settings = defaultSettings();
+      }
+    }
+
+    function saveData() {
+      try {
+        localStorage.setItem(KEY_CANDIDATES, JSON.stringify(candidates));
+        localStorage.setItem(KEY_SETTINGS, JSON.stringify(settings));
+      } catch (e) {
+        alert('データを保存できませんでした。ブラウザのプライベートモードでは保存できない場合があります。');
+      }
+    }
+
+    // ============================================================
+    // いちばん都合のよい候補を探す
+    //   1. 状態が「決定」の候補があればそれ（複数あれば日時の早いもの）
+    //   2. なければ ○ の多い順 → △ の多い順 → 日時の早い順
+    // ============================================================
+    function findBest() {
+      if (candidates.length === 0) return null;
+      const decided = candidates.filter((c) => c.status === STATUS_DECIDED).sort(compareByDateTime);
+      if (decided.length > 0) return { candidate: decided[0], decided: true };
+      const sorted = [...candidates].sort((a, b) => {
+        const ca = countMarks(a);
+        const cb = countMarks(b);
+        return (cb['○'] - ca['○']) || (cb['△'] - ca['△']) || compareByDateTime(a, b);
+      });
+      return { candidate: sorted[0], decided: false };
+    }
+
+    // ============================================================
+    // 画面の描画
+    // ============================================================
+
+    // 一覧に出す ○△×－ の丸印
+    function markBadge(answer) {
+      const label = answer === UNANSWERED ? '－' : answer;
+      return `<span class="inline-flex h-8 w-8 items-center justify-center rounded-full text-base font-bold ${MARK_BADGE_CLASS[answer]}" title="${esc(answer)}">${label}</span>`;
+    }
+
+    function decidedBadge() {
+      return '<span class="ml-1 inline-block rounded bg-indigo-600 px-1.5 py-0.5 text-xs font-bold text-white">決定</span>';
+    }
+
+    function bestMark() {
+      return '<span class="text-amber-500" title="いちばん都合のよい候補">★</span> ';
+    }
+
+    // サマリー
+    function renderSummary() {
+      const best = findBest();
+      let body;
+      let boxClass = 'border-slate-200 bg-slate-50';
+      if (!best) {
+        body = '<p class="text-sm text-slate-500">候補日がまだありません。</p>';
+      } else {
+        const c = best.candidate;
+        const n = countMarks(c);
+        boxClass = best.decided ? 'border-indigo-200 bg-indigo-50' : 'border-emerald-200 bg-emerald-50';
+        body = `
+          <p class="text-sm font-bold ${best.decided ? 'text-indigo-700' : 'text-emerald-700'}">
+            ${best.decided ? '決定した日程' : '★ いちばん都合のよい候補'}
+          </p>
+          <p class="mt-1 text-xl font-bold">${esc(formatDateLong(c.date))}<br class="sm:hidden"> ${esc(c.startTime)}–${esc(c.endTime)}</p>
+          <p class="mt-1 text-sm text-slate-600">
+            ○ ${n['○']}人 ／ △ ${n['△']}人 ／ × ${n['×']}人 ／ 未回答 ${n[UNANSWERED]}人
+          </p>`;
+      }
+      summaryEl.innerHTML = `
+        <p class="text-xs text-slate-500">会議名</p>
+        <p class="break-words text-lg font-bold">${esc(settings.meetingName)}</p>
+        <div class="mt-3 rounded-lg border p-3 ${boxClass}">${body}</div>`;
+    }
+
+    // PC用の表
+    function renderTable(sorted, bestId) {
+      const headCells = settings.memberNames.map((name) => `
+        <th class="px-2 py-2 text-center font-semibold">
+          <span class="mx-auto block max-w-[6rem] truncate" title="${esc(name)}">${esc(name)}</span>
+        </th>`).join('');
+
+      const rows = sorted.map((c) => {
+        const n = countMarks(c);
+        const rowClass = c.status === STATUS_DECIDED ? 'bg-indigo-50 hover:bg-indigo-100' : 'hover:bg-slate-50';
+        return `
+          <tr data-id="${esc(c.id)}" tabindex="0" class="cursor-pointer border-t border-slate-100 ${rowClass}">
+            <td class="whitespace-nowrap px-3 py-2 font-medium">
+              ${c.id === bestId ? bestMark() : ''}${esc(formatDate(c.date))}${c.status === STATUS_DECIDED ? decidedBadge() : ''}
+            </td>
+            <td class="px-3 py-2">
+              <span class="whitespace-nowrap">${esc(c.startTime)}–${esc(c.endTime)}</span>
+              ${c.memo ? `<span class="block max-w-[12rem] truncate text-xs text-slate-500" title="${esc(c.memo)}">${esc(c.memo)}</span>` : ''}
+            </td>
+            ${c.answers.map((a) => `<td class="px-2 py-2 text-center">${markBadge(a)}</td>`).join('')}
+            <td class="px-3 py-2 text-center text-lg font-bold text-emerald-700">${n['○']}</td>
+          </tr>`;
+      }).join('');
+
+      tableWrap.innerHTML = `
+        <table class="w-full rounded-xl border border-slate-200 bg-white text-sm">
+          <thead class="bg-slate-100 text-slate-600">
+            <tr>
+              <th class="px-3 py-2 text-left font-semibold">日付</th>
+              <th class="px-3 py-2 text-left font-semibold">時刻</th>
+              ${headCells}
+              <th class="px-3 py-2 text-center font-semibold">○の数</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    // スマホ用のカード
+    function renderCards(sorted, bestId) {
+      cardList.innerHTML = sorted.map((c) => {
+        const n = countMarks(c);
+        const cardClass = c.status === STATUS_DECIDED ? 'border-indigo-300 bg-indigo-50' : 'border-slate-200 bg-white';
+        const members = c.answers.map((a, i) => `
+          <div class="flex min-w-0 flex-col items-center gap-1">
+            <span class="w-full truncate text-center text-xs text-slate-500">${esc(settings.memberNames[i])}</span>
+            ${markBadge(a)}
+          </div>`).join('');
+        return `
+          <article data-id="${esc(c.id)}" tabindex="0" class="cursor-pointer rounded-xl border p-4 ${cardClass}">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <p class="font-bold">${c.id === bestId ? bestMark() : ''}${esc(formatDate(c.date))}${c.status === STATUS_DECIDED ? decidedBadge() : ''}</p>
+                <p class="text-sm text-slate-600">${esc(c.startTime)}–${esc(c.endTime)}</p>
+              </div>
+              <div class="shrink-0 text-right">
+                <p class="text-xs text-slate-500">○の数</p>
+                <p class="text-2xl font-bold leading-none text-emerald-700">${n['○']}</p>
+              </div>
+            </div>
+            <div class="mt-3 grid grid-cols-5 gap-1">${members}</div>
+            ${c.memo ? `<p class="mt-3 break-words text-sm text-slate-600">${esc(c.memo)}</p>` : ''}
+          </article>`;
+      }).join('');
+    }
+
+    // 一覧（日付順）
+    function renderList() {
+      const sorted = [...candidates].sort(compareByDateTime);
+      const best = findBest();
+      const bestId = best && !best.decided ? best.candidate.id : null;
+      listEmpty.classList.toggle('hidden', sorted.length > 0);
+      if (sorted.length === 0) {
+        tableWrap.innerHTML = '';
+        cardList.innerHTML = '';
+        return;
+      }
+      renderTable(sorted, bestId);
+      renderCards(sorted, bestId);
+    }
+
+    function render() {
+      renderSummary();
+      renderList();
+    }
+
+    // ============================================================
+    // 候補日の登録・編集ポップアップ
+    // ============================================================
+
+    // 5人分の ○△× ボタンを描く
+    function renderAnswerRows() {
+      answerRows.innerHTML = settings.memberNames.map((name, i) => {
+        const buttons = MARKS.map((m) => {
+          const selected = draftAnswers[i] === m;
+          return `<button type="button" data-member="${i}" data-mark="${m}" aria-pressed="${selected}"
+            class="h-11 w-11 rounded-lg border text-lg font-bold ${selected ? MARK_SELECTED_CLASS[m] : MARK_UNSELECTED_CLASS}">${m}</button>`;
+        }).join('');
+        return `
+          <div class="flex items-center gap-2 py-2">
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm font-medium">${esc(name)}</p>
+              <p class="text-xs text-slate-400">${draftAnswers[i] === UNANSWERED ? '未回答' : ''}</p>
+            </div>
+            <div class="flex shrink-0 gap-1.5">${buttons}</div>
+          </div>`;
+      }).join('');
+    }
+
+    // 状態（候補／決定）ボタンを描く
+    function renderStatusButtons() {
+      statusButtons.innerHTML = [STATUS_CANDIDATE, STATUS_DECIDED].map((s) => {
+        const selected = draftStatus === s;
+        const cls = selected
+          ? (s === STATUS_DECIDED ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-600 bg-slate-600 text-white')
+          : 'border-slate-300 bg-white text-slate-500 hover:bg-slate-50';
+        return `<button type="button" data-status="${s}" aria-pressed="${selected}"
+          class="rounded-lg border px-3 py-2.5 text-sm font-bold ${cls}">${s}</button>`;
+      }).join('');
+    }
+
+    function showError(el, message) {
+      el.textContent = message;
+      el.classList.remove('hidden');
+    }
+
+    function hideError(el) {
+      el.textContent = '';
+      el.classList.add('hidden');
+    }
+
+    // id を渡すと編集、渡さないと新規登録として開く
+    function openCandidateDialog(id) {
+      const target = id ? candidates.find((c) => c.id === id) : null;
+      if (id && !target) return;
+      editingId = target ? target.id : null;
+
+      $('candidateDialogTitle').textContent = target ? '候補日を編集' : '候補日を追加';
+      // 新規のときは今日の日付を入れておく（年が空のままになって保存できない事故を防ぐ）
+      $('fDate').value = target ? target.date : toDateStr(new Date());
+      $('fStart').value = target ? target.startTime : '10:00';
+      $('fEnd').value = target ? target.endTime : '11:00';
+      $('fMemo').value = target ? target.memo : '';
+      draftAnswers = target ? [...target.answers] : Array(MEMBER_COUNT).fill(UNANSWERED);
+      draftStatus = target ? target.status : STATUS_CANDIDATE;
+
+      $('btnDelete').classList.toggle('hidden', !target);
+      $('candidateMeta').textContent = target
+        ? `作成：${formatTimestamp(target.createdAt)}\n更新：${formatTimestamp(target.updatedAt)}`
+        : '';
+      hideError($('candidateError'));
+      clearFieldErrors();
+
+      renderAnswerRows();
+      renderStatusButtons();
+      candidateDialog.showModal();
+    }
+
+    // 日付・時刻の入力欄
+    const dateTimeFields = [
+      { input: $('fDate'), label: '日付', partHint: '年・月・日をすべて入力してください（欄を押すと出るカレンダーから選ぶこともできます）。' },
+      { input: $('fStart'), label: '開始時刻', partHint: '時・分の両方を入力してください。' },
+      { input: $('fEnd'), label: '終了時刻', partHint: '時・分の両方を入力してください。' },
+    ];
+
+    // 赤枠を消す
+    function clearFieldErrors() {
+      dateTimeFields.forEach((f) => f.input.removeAttribute('aria-invalid'));
+    }
+
+    // 入力し直したら、その欄の赤枠を消す
+    dateTimeFields.forEach((f) => {
+      f.input.addEventListener('input', () => f.input.removeAttribute('aria-invalid'));
+    });
+
+    // 日付・時刻を調べ、問題があれば「どの欄か」と「メッセージ」を返す（問題がなければ null）
+    function findDateTimeProblem() {
+      for (const f of dateTimeFields) {
+        if (f.input.value) continue;
+        // validity.badInput：入力が途中（例：日だけ空いている）で、ブラウザが値を受け取れていない状態
+        const message = f.input.validity.badInput
+          ? `${f.label}の入力が途中です。${f.partHint}`
+          : `${f.label}を入力してください。`;
+        return { input: f.input, message };
+      }
+      if ($('fEnd').value <= $('fStart').value) {
+        return { input: $('fEnd'), message: '終了時刻は開始時刻より後にしてください。' };
+      }
+      return null;
+    }
+
+    // ○△× ボタンを押したとき（同じボタンをもう一度押すと未回答に戻す）
+    answerRows.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-mark]');
+      if (!btn) return;
+      const i = Number(btn.dataset.member);
+      const mark = btn.dataset.mark;
+      draftAnswers[i] = draftAnswers[i] === mark ? UNANSWERED : mark;
+      renderAnswerRows();
+    });
+
+    // 状態ボタンを押したとき
+    statusButtons.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-status]');
+      if (!btn) return;
+      draftStatus = btn.dataset.status;
+      renderStatusButtons();
+    });
+
+    // 保存ボタン
+    candidateForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const errorEl = $('candidateError');
+      const date = $('fDate').value;
+      const startTime = $('fStart').value;
+      const endTime = $('fEnd').value;
+
+      // 入力チェック（問題のある欄を赤枠にして、その欄にカーソルを移す）
+      clearFieldErrors();
+      const problem = findDateTimeProblem();
+      if (problem) {
+        showError(errorEl, problem.message);
+        problem.input.setAttribute('aria-invalid', 'true');
+        problem.input.focus();
+        return;
+      }
+
+      const now = new Date().toISOString();
+
+      // 「決定」は1件だけ：ほかの「決定」を「候補」に戻す
+      if (draftStatus === STATUS_DECIDED) {
+        candidates.forEach((c) => {
+          if (c.id !== editingId && c.status === STATUS_DECIDED) {
+            c.status = STATUS_CANDIDATE;
+            c.updatedAt = now;
+          }
+        });
+      }
+
+      const values = {
+        date,
+        startTime,
+        endTime,
+        answers: [...draftAnswers],
+        status: draftStatus,
+        memo: $('fMemo').value.trim(),
+        updatedAt: now,
+      };
+
+      if (editingId) {
+        const target = candidates.find((c) => c.id === editingId);
+        if (target) Object.assign(target, values);
+      } else {
+        candidates.push({ id: newId(), createdAt: now, ...values });
+      }
+
+      saveData();
+      render();
+      candidateDialog.close();
+    });
+
+    // 削除ボタン（確認してから削除）
+    $('btnDelete').addEventListener('click', () => {
+      const target = candidates.find((c) => c.id === editingId);
+      if (!target) return;
+      const ok = confirm(`${formatDate(target.date)} ${target.startTime}–${target.endTime} の候補日を削除しますか？\nこの操作は元に戻せません。`);
+      if (!ok) return;
+      candidates = candidates.filter((c) => c.id !== editingId);
+      saveData();
+      render();
+      candidateDialog.close();
+    });
+
+    // ============================================================
+    // 設定ポップアップ
+    // ============================================================
+    function openSettingsDialog() {
+      $('sMeetingName').value = settings.meetingName;
+      memberInputs.innerHTML = settings.memberNames.map((name, i) => `
+        <label class="flex items-center gap-2">
+          <span class="w-6 shrink-0 text-sm text-slate-500">${i + 1}</span>
+          <input type="text" data-member-input="${i}" value="${esc(name)}"
+            class="block w-full min-w-0 rounded-lg border border-slate-300 px-3 py-2">
+        </label>`).join('');
+      hideError($('settingsError'));
+      settingsDialog.showModal();
+    }
+
+    settingsForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const meetingName = $('sMeetingName').value.trim();
+      const memberNames = [...memberInputs.querySelectorAll('[data-member-input]')].map((el) => el.value.trim());
+
+      if (!meetingName) {
+        showError($('settingsError'), '会議名を入力してください。');
+        return;
+      }
+      if (memberNames.some((n) => !n)) {
+        showError($('settingsError'), 'メンバー名を5人分すべて入力してください。');
+        return;
+      }
+
+      settings = { meetingName, memberNames };
+      saveData();
+      render();
+      settingsDialog.close();
+    });
+
+    // ============================================================
+    // そのほかのボタン・操作
+    // ============================================================
+    $('btnAdd').addEventListener('click', () => openCandidateDialog(null));
+    $('btnSettings').addEventListener('click', openSettingsDialog);
+
+    $('btnReset').addEventListener('click', () => {
+      const ok = confirm('ダミーデータに戻しますか？\n今入っている候補日・会議名・メンバー名はすべて消えて、最初の状態に戻ります。');
+      if (!ok) return;
+      resetToDummy();
+      render();
+    });
+
+    // ポップアップの「キャンセル」
+    document.querySelectorAll('[data-close]').forEach((btn) => {
+      btn.addEventListener('click', () => btn.closest('dialog').close());
+    });
+
+    // 一覧の行・カードを押すと編集ポップアップを開く
+    function handleListOpen(e) {
+      const item = e.target.closest('[data-id]');
+      if (item) openCandidateDialog(item.dataset.id);
+    }
+    function handleListKey(e) {
+      if (e.key === 'Enter' || e.key === ' ') {
+        const item = e.target.closest('[data-id]');
+        if (item) {
+          e.preventDefault();
+          openCandidateDialog(item.dataset.id);
+        }
+      }
+    }
+    [tableWrap, cardList].forEach((el) => {
+      el.addEventListener('click', handleListOpen);
+      el.addEventListener('keydown', handleListKey);
+    });
+
+    // ============================================================
+    // 起動
+    // ============================================================
+    loadData();
+    render();
+  </script>
+</body>
+</html>
